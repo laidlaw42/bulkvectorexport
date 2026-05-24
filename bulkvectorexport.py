@@ -22,11 +22,11 @@
  ***************************************************************************/
 """
 import os.path
-from PyQt5.QtCore import (QSettings, QTranslator, qVersion, QCoreApplication)
-from PyQt5.QtGui import QIcon
-from PyQt5.QtWidgets import (QAction, QMessageBox)
+from qgis.PyQt.QtCore import (QSettings, QTranslator, qVersion, QCoreApplication)
+from qgis.PyQt.QtGui import QIcon
+from qgis.PyQt.QtWidgets import (QAction, QMessageBox)
 from qgis.core import (QgsVectorFileWriter, QgsProject, QgsMapLayer,
-    QgsLayerDefinition)
+                        QgsLayerDefinition, QgsCoordinateTransform)
 
 # Initialize Qt resources from file resources.py
 from .resources import *
@@ -79,7 +79,7 @@ class BulkVectorExport:
         We implement this ourselves since we do not inherit QObject.
 
         :param message: String for translation.
-        :type message: str, QString
+            :type message: str, QString
 
         :returns: Translated version of message.
         :rtype: QString
@@ -91,44 +91,7 @@ class BulkVectorExport:
     def add_action(self, icon_path, text, callback, enabled_flag=True,
         add_to_menu=True, add_to_toolbar=True, status_tip=None,
         whats_this=None, parent=None):
-        """Add a toolbar icon to the toolbar.
-
-        :param icon_path: Path to the icon for this action. Can be a resource
-            path (e.g. ':/plugins/foo/bar.png') or a normal file system path.
-        :type icon_path: str
-
-        :param text: Text that should be shown in menu items for this action.
-        :type text: str
-
-        :param callback: Function to be called when the action is triggered.
-        :type callback: function
-
-        :param enabled_flag: A flag indicating if the action should be enabled
-            by default. Defaults to True.
-        :type enabled_flag: bool
-
-        :param add_to_menu: Flag indicating whether the action should also
-            be added to the menu. Defaults to True.
-        :type add_to_menu: bool
-
-        :param add_to_toolbar: Flag indicating whether the action should also
-            be added to the toolbar. Defaults to True.
-        :type add_to_toolbar: bool
-
-        :param status_tip: Optional text to show in a popup when mouse pointer
-            hovers over the action.
-        :type status_tip: str
-
-        :param parent: Parent widget for the new action. Defaults None.
-        :type parent: QWidget
-
-        :param whats_this: Optional text to show in the status bar when the
-            mouse pointer hovers over the action.
-
-        :returns: The action that was created. Note that the action is also
-            added to self.actions list.
-        :rtype: QAction
-        """
+        """Add a toolbar icon to the toolbar."""
 
         icon = QIcon(icon_path)
         action = QAction(icon, text, parent)
@@ -179,11 +142,11 @@ class BulkVectorExport:
         """Run method that performs all the real work"""
         # show the dialog
         self.dlg.show()
-        # Run the dialog event loop
-        result = self.dlg.exec_()
-        # See if OK was pressed
+        # Run the dialog event loop safely on both PyQt5 (exec_()) and PyQt6 (exec())
+        exec_method = getattr(self.dlg, 'exec', getattr(self.dlg, 'exec_', None))
+        result = exec_method()
         if result:
-            # get directry name
+            # get directory name
             dirName = self.dlg.dirEdit.text().strip()
             # get ogr driver name
             ogr_driver_name = self.dlg.formatBox.currentText()
@@ -192,7 +155,9 @@ class BulkVectorExport:
             sldExport = self.dlg.sldExport.isChecked()
             qlrExport = self.dlg.qlrExport.isChecked()
             qmlExport = self.dlg.qmlExport.isChecked()
+            
             crs = QgsProject.instance().crs()
+            
             for layer in self.iface.mapCanvas().layers():
                 if layer.type() == QgsMapLayer.VectorLayer:
                     print('Writing:' + layer.name())
@@ -200,15 +165,33 @@ class BulkVectorExport:
                     if self.dlg.layerCrsButton.isChecked():
                         crs = layer.crs()
                         print('CRS selected: ', crs.description())
-                    # Thijs Brentjens (https://github.com/thijsbrentjens/)
-                    # add option for exporting only selected features
-                    result2 = QgsVectorFileWriter.writeAsVectorFormat(layer,
-                        layer_filename, layer.dataProvider().encoding(), crs,
-                        ogr_driver_name, exportOnlySelected)
-                    if result2[0]:
-                        QMessageBox.warning(self.dlg, "BulkVectorExport",\
-                            "Failed to export: " + layer.name() + \
-                            " Status: " + str(result2))
+                    
+                    # Setup cross-version compatible Save Options block
+                    options = QgsVectorFileWriter.SaveVectorOptions()
+                    options.driverName = ogr_driver_name
+                    options.fileEncoding = layer.dataProvider().encoding()
+                    options.onlySelectedFeatures = exportOnlySelected
+                    
+                    # If the user chose a specific CRS, assign it to the options block
+                    if self.dlg.layerCrsButton.isChecked():
+                        options.onlySelectedFeatures = exportOnlySelected
+                    else:
+                        # Otherwise, use the project instance CRS defined above
+                        options.ct = QgsCoordinateTransform(layer.crs(), crs, QgsProject.instance())
+                    
+                    # QGIS 3 and 4 safe export call
+                    err, errorMessage, newFilename, newLayerName = QgsVectorFileWriter.writeAsVectorFormatV3(
+                        layer,
+                        layer_filename,
+                        QgsProject.instance().transformContext(),
+                        options
+                    )
+                    # QgsVectorFileWriter.NoError equals 0
+                    if err != QgsVectorFileWriter.NoError:
+                        QMessageBox.warning(self.dlg, "BulkVectorExport",
+                                            "Failed to export: " + layer.name() + 
+                                            " Status Error Code: " + str(err) +
+                                            " Message: " + errorMessage)
                     else:
                         if sldExport:
                             # export SLD if layer was exported with success
@@ -217,7 +200,7 @@ class BulkVectorExport:
                             # export QGIS layer definition (qlr)
                             node = QgsProject.instance().layerTreeRoot().findLayer(layer.id())
                             QgsLayerDefinition.exportLayerDefinition(
-                                layer_filename, [node])
+                                layer_filename + '.qlr', [node])
                         if qmlExport:
                             qml = os.path.splitext(layer_filename)[0] + '.qml'
                             layer.saveNamedStyle(qml)
