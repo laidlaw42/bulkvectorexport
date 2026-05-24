@@ -3,10 +3,12 @@
 # Resource object code
 #
 # Created by: The Resource Compiler for PyQt5 (Qt v5.9.5)
+# Modified to be dual-compatible with QGIS 3 & 4 (Qt5 & Qt6)
 #
-# WARNING! All changes made in this file will be lost!
+# WARNING! All manual changes made in this file will be lost if recompiled!
 
-from PyQt5 import QtCore
+# Use the qgis.PyQt wrapper to dynamically match the active QGIS Qt version environment
+from qgis.PyQt import QtCore
 
 qt_resource_data = b"\
 \x00\x00\x08\x36\
