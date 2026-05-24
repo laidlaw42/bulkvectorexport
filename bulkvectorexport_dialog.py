@@ -24,7 +24,7 @@
 
 import os
 
-from PyQt5 import (uic, QtWidgets, QtCore)
+from qgis.PyQt import uic, QtWidgets, QtCore
 from osgeo import ogr
 
 FORM_CLASS, _ = uic.loadUiType(os.path.join(
@@ -40,40 +40,41 @@ class BulkVectorExportDialog(QtWidgets.QDialog, FORM_CLASS):
         self.cancelBtn.clicked.connect(self.reject)
         self.okBtn.clicked.connect(self.ok)
         self.supportedDriverList = ['CSV', 'DGN', 'DXF', 'GML', 'GPKG',
-            'GPSTrackMaker', 'GeoJSON', 'GEoconcept', 'Interlis 1', 'JML',
+            'GPSTrackMaker', 'GeoJSON', 'Geoconcept', 'Interlis 1', 'JML',
             'KML', 'LIBKML', 'ESRI Shapefile', 'MapInfo File', 'ODS', 'OGR_GMT',
             'PGDUMP', 'SQLite', 'VDV', 'XLSX']
 
     def showEvent(self, event):
         """ set up dialog widgets """
         if self.formatBox.count() == 0:
-            # get available ogr driver names which can be created
             driverNameList = []
-            for i in range(ogr.GetDriverCount()):
-                name = ogr.GetDriver(i).GetName()
-                if not name in driverNameList and \
-                    name in self.supportedDriverList and \
-                    ogr.GetDriver(i).TestCapability(ogr.ODrCCreateDataSource):
-                    driverNameList.append(name)
+            
+            # Use fixed iteration over your supported list to bypass GDAL 3.x index shifts safely
+            for driver_name in self.supportedDriverList:
+                driver = ogr.GetDriverByName(driver_name)
+                if driver is not None:
+                    if driver.TestCapability(ogr.ODrCCreateDataSource):
+                        # Use the exact internal name standard
+                        name = driver.GetName()
+                        if name not in driverNameList:
+                            driverNameList.append(name)
+                            
             self.formatBox.addItems(sorted(driverNameList))
 
     def getDir(self):
         """ select target directory """
-        dirName = QtWidgets.QFileDialog.getExistingDirectory(self, \
-            "Select Directory")
-        # TODO cancel
-        self.dirEdit.setText(dirName)
+        dirName = QtWidgets.QFileDialog.getExistingDirectory(self, "Select Directory")
+        if dirName:
+            self.dirEdit.setText(dirName)
 
     def ok(self):
         """ check widgets """
         # get target directory
         dirName = self.dirEdit.text().strip()
         if len(dirName) == 0:
-            QtWidgets.QMessageBox.critical(self, "BulkVectorExport", \
-                "No directory entered")
+            QtWidgets.QMessageBox.critical(self, "BulkVectorExport", "No directory entered")
             return
         if not QtCore.QFileInfo(dirName).isDir():
-            QtWidgets.QMessageBox.critical(self, "BulkVectorExport", \
-                "No such directory : " + dirName)
+            QtWidgets.QMessageBox.critical(self, "BulkVectorExport", "No such directory : " + dirName)
             return
         self.accept()
